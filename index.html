@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能简历匹配生成器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#2563eb',
+                        secondary: '#1f2937',
+                        accent: '#f59e0b',
+                        dark: '#111827',
+                        light: '#f9fafb'
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .scrollbar-thin {
+                scrollbar-width: thin;
+                scrollbar-color: #2563eb #1f2937;
+            }
+            .scrollbar-thin::-webkit-scrollbar {
+                width:6px;
+            }
+            .scrollbar-thin::-webkit-scrollbar-track {
+                background:#1f2937;
+            }
+            .scrollbar-thin::-webkit-scrollbar-thumb {
+                background:#2563eb;
+                border-radius:3px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-dark text-light h-screen flex flex-col overflow-hidden">
+    <!--顶部导航-->
+    <header class="bg-secondary p-3 flex justify-between items-center shadow-md">
+        <h1 class="text-xl font-bold text-white">智能简历匹配生成器</h1>
+        <div class="flex gap-2">
+            <button id="exportJsonBtn" class="bg-primary hover:bg-blue-700 px-3 py-2 rounded text-sm">
+                <i class="fas fa-download"></i> 保存工程
+            </button>
+            <label for="importFile" class="bg-green-600 hover:bg-green-700 px-3 py-2 rounded text-sm cursor-pointer">
+                <i class="fas fa-upload"></i> 载入工程
+            </label>
+            <input id="importFile" type="file" accept=".json" class="hidden">
+            <button id="undoBtn" class="bg-amber-500 hover:bg-amber-600 px-3 py-2 rounded text-sm">
+                <i class="fas fa-undo"></i> 撤销
+            </button>
+            <button id="clearBtn" class="bg-red-600 hover:bg-red-700 px-3 py-2 rounded text-sm">
+                <i class="fas fa-trash"></i> 清空
+            </button>
+        </div>
+    </header>
+    <main class="flex flex-1 overflow-hidden">
+        <!--左侧：岗位JD + 个人信息输入面板-->
+        <aside class="w-80 bg-secondary p-4 overflow-y-auto scrollbar-thin border-r border-gray-700">
+            <div class="mb-5">
+                <h2 class="text-lg font-semibold text-accent mb-2">📋 岗位要求 JD</h2>
+                <textarea id="jdInput" class="w-full h-36 bg-gray-800 border border-gray-600 rounded p-2 text-sm" placeholder="粘贴招聘岗位描述，例如：
+岗位要求：
+1.熟练掌握Vue3、JavaScript
+2.会SQL数据库
+3.有前端项目开发经验
+4.本科及以上学历"></textarea>
+                <button id="parseJD" class="w-full mt-2 bg-primary p-2 rounded">提取岗位关键词</button>
+                <div id="jdKeywordsBox" class="mt-2 text-sm"></div>
+            </div>
+
+            <div class="mb-5">
+                <h2 class="text-lg font-semibold text-accent mb-2">👤 个人能力信息</h2>
+                <div class="space-y-2">
+                    <input type="text" id="userName" placeholder="姓名" class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-sm">
+                    <input type="text" id="userEdu" placeholder="学历/学校专业" class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-sm">
+                    <textarea id="userSkill" class="w-full h-24 bg-gray-800 border border-gray-600 rounded p-2 text-sm" placeholder="你的技能，用逗号分隔：Vue,Python,SQL,剪映"></textarea>
+                </div>
+
+                <div class="mt-3">
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium">📁 项目经历</span>
+                        <button id="addProjectBtn" class="bg-accent px-2 rounded text-sm">+新增项目</button>
+                    </div>
+                    <div id="projectList" class="mt-2 space-y-2 max-h-40 overflow-y-auto scrollbar-thin"></div>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 p-3 rounded border border-gray-600">
+                <h3 class="font-semibold text-accent">📊 匹配分析</h3>
+                <div class="mt-2 text-sm">
+                    <p>岗位重合度：<span id="matchPercent" class="text-xl font-bold text-green-400">0%</span></p>
+                    <p>预估入职概率：<span id="hireRate" class="text-xl font-bold text-green-400">0%</span></p>
+                    <div id="missingTips" class="mt-2 text-amber-300"></div>
+                </div>
+                <button id="calcMatchBtn" class="w-full mt-3 bg-primary p-2 rounded">计算匹配 & 生成简历</button>
+            </div>
+        </aside>
+        <!--中间Canvas简历预览画布-->
+        <div class="flex-1 p-4 overflow-auto flex justify-center items-center bg-gray-900">
+            <canvas id="resumeCanvas" width="520" height="720" class="bg-white shadow-lg"></canvas>
+        </div>
+    </main>
+    <footer class="bg-secondary p-2 text-sm flex justify-between">
+        <span id="statusText">就绪 | 在左侧输入岗位和个人信息，点击生成简历</span>
+        <span>操作说明：填入信息 → 提取关键词 → 计算匹配 → 预览简历</span>
+    </footer>
+
+    <script>
+        const state = {
+            jdText: "",
+            jdKeywords: [],
+            user: {
+                name: "",
+                edu: "",
+                skills: [],
+                projects: []
+            },
+            matchPercent:0,
+            hireRate:0,
+            tips:"",
+            history:[],
+            historyIndex:-1
+        };
+        const canvas = document.getElementById("resumeCanvas");
+        const ctx = canvas.getContext("2d");
+
+        //保存历史
+        function saveHistory(){
+            const copy = JSON.parse(JSON.stringify(state));
+            if(state.historyIndex < state.history.length-1){
+                state.history = state.history.slice(0, state.historyIndex+1);
+            }
+            state.history.push(copy);
+            state.historyIndex = state.history.length - 1;
+            if(state.history.length>50) {state.history.shift(); state.historyIndex--;}
+        }
+        function undo(){
+            if(state.historyIndex <=0){alert("无法撤销");return;}
+            state.historyIndex--;
+            Object.assign(state, JSON.parse(JSON.stringify(state.history[state.historyIndex])));
+            syncUI();
+            renderCanvas();
+        }
+
+        //提取JD关键词
+        function extractKeywords(text){
+            const raw = text.replace(/[，。；\n]/g, ",").split(",");
+            const keywords = raw.map(s=>s.trim()).filter(s=>s.length>1);
+            return [...new Set(keywords)];
+        }
+
+        //计算匹配度
+        function calculateMatch(){
+            const userSkillStr = document.getElementById("userSkill").value;
+            const userSkills = userSkillStr.split(",").map(s=>s.trim().toLowerCase()).filter(x=>x);
+            state.user.skills = userSkills;
+            state.user.name = document.getElementById("userName").value.trim();
+            state.user.edu = document.getElementById("userEdu").value.trim();
+
+            const jdKeywords = state.jdKeywords.map(k=>k.toLowerCase());
+            let hitCount = 0;
+            jdKeywords.forEach(kw=>{
+                if(userSkills.some(s=>s.includes(kw) || kw.includes(s))){
+                    hitCount++;
+                }
+            })
+            const total = jdKeywords.length;
+            let match = total ===0 ? 0 : (hitCount / total * 100);
+            state.matchPercent = Math.round(match);
+            state.hireRate = Math.min(100, Math.round(match * 0.9 + Math.random()*5));
+
+            //缺失关键词
+            const missing = jdKeywords.filter(kw=> !userSkills.some(s=>s.includes(kw) || kw.includes(s)));
+            if(missing.length>0){
+                state.tips = `⚠️ 需要补充：${missing.join("、")}，建议新增相关项目经历提升匹配度`;
+            }else{
+                state.tips = "✅ 所有岗位要求关键词已覆盖，可以直接投递";
+            }
+            document.getElementById("matchPercent").innerText = state.matchPercent+"%";
+            document.getElementById("hireRate").innerText = state.hireRate+"%";
+            document.getElementById("missingTips").innerText = state.tips;
+            saveHistory();
+            renderCanvas();
+        }
+
+        //Canvas绘制简历
+        function renderCanvas(){
+            ctx.fillStyle="#ffffff";
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+            ctx.fillStyle="#111";
+            let y = 40;
+            ctx.font="bold 26px sans-serif";
+            ctx.fillText(state.user.name || "你的姓名", 40, y);
+            y +=36;
+            ctx.font="16px sans-serif";
+            ctx.fillText(state.user.edu || "学历/专业",40,y);
+            y +=32;
+            ctx.font="bold 18px sans-serif";
+            ctx.fillText("技能清单",40,y);
+            ctx.font="15px sans-serif";
+            y +=24;
+            ctx.fillText(state.user.skills.join(" | "),40,y);
+            y +=36;
+            ctx.font="bold 18px sans-serif";
+            ctx.fillText("项目经历",40,y);
+            ctx.font="15px sans-serif";
+            y +=24;
+            state.user.projects.forEach(proj=>{
+                ctx.fillText(`• ${proj}`,40,y);
+                y +=22;
+            })
+            y +=20;
+            ctx.font="bold 18px sans-serif";
+            ctx.fillText("岗位匹配评估",40,y);
+            ctx.font="15px sans-serif";
+            y +=24;
+            ctx.fillText(`岗位重合度：${state.matchPercent}%`,40,y);
+            y +=22;
+            ctx.fillText(`预估入职概率：${state.hireRate}%`,40,y);
+            y +=22;
+            ctx.fillText(state.tips,40,y,440);
+        }
+
+        //新增项目
+        function addProject(){
+            state.user.projects.push("在此填写项目描述");
+            saveHistory();
+            renderProjectList();
+            renderCanvas();
+        }
+        function renderProjectList(){
+            const wrap = document.getElementById("projectList");
+            wrap.innerHTML="";
+            state.user.projects.forEach((item,idx)=>{
+                const div = document.createElement("div");
+                div.className="flex gap-1";
+                const input = document.createElement("input");
+                input.value = item;
+                input.className="flex-1 bg-gray-800 rounded p-1 text-sm";
+                input.oninput = (e)=>{
+                    state.user.projects[idx] = e.target.value;
+                    saveHistory();renderCanvas();
+                }
+                const delBtn = document.createElement("button");
+                delBtn.innerText="✕";
+                delBtn.className="bg-red-600 px-2 rounded";
+                delBtn.onclick=()=>{
+                    state.user.projects.splice(idx,1);
+                    saveHistory();
+                    renderProjectList();
+                    renderCanvas();
+                }
+                div.appendChild(input);
+                div.appendChild(delBtn);
+                wrap.appendChild(div);
+            })
+        }
+        function syncUI(){
+            document.getElementById("jdInput").value = state.jdText;
+            document.getElementById("userName").value = state.user.name;
+            document.getElementById("userEdu").value = state.user.edu;
+            document.getElementById("userSkill").value = state.user.skills.join(",");
+            document.getElementById("matchPercent").innerText = state.matchPercent+"%";
+            document.getElementById("hireRate").innerText = state.hireRate+"%";
+            document.getElementById("missingTips").innerText = state.tips;
+            renderProjectList();
+        }
+
+        //文件导入导出
+        function exportJson(){
+            const blob = new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href=url;
+            a.download="简历工程.json";
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        function importJson(e){
+            const f = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = ev=>{
+                const loaded = JSON.parse(ev.target.result);
+                Object.assign(state, loaded);
+                saveHistory();
+                syncUI();
+                renderCanvas();
+            }
+            reader.readAsText(f);
+        }
+        function clearAll(){
+            if(!confirm("确认清空全部内容？"))return;
+            state.jdText="";state.jdKeywords=[];
+            state.user={name:"",edu:"",skills:[],projects:[]};
+            state.matchPercent=0;state.hireRate=0;state.tips="";
+            saveHistory();
+            syncUI();
+            renderCanvas();
+        }
+
+        //绑定事件
+        document.getElementById("parseJD").onclick = ()=>{
+            const jdText = document.getElementById("jdInput").value;
+            state.jdText = jdText;
+            state.jdKeywords = extractKeywords(jdText);
+            document.getElementById("jdKeywordsBox").innerText = "提取关键词："+state.jdKeywords.join(" | ");
+            saveHistory();
+        }
+        document.getElementById("calcMatchBtn").onclick = calculateMatch;
+        document.getElementById("addProjectBtn").onclick = addProject;
+        document.getElementById("exportJsonBtn").onclick = exportJson;
+        document.getElementById("importFile").onchange = importJson;
+        document.getElementById("undoBtn").onclick = undo;
+        document.getElementById("clearBtn").onclick = clearAll;
+
+        window.onload = ()=>{
+            saveHistory();
+            renderProjectList();
+            renderCanvas();
+        }
+    </script>
+</body>
+</html>
